@@ -33,10 +33,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Python source
+      - name: Checkout CPython repository
         uses: actions/checkout@v2
         with:
+          repository: python/cpython
           ref: ${{ github.event.inputs.python_version }}
+          fetch-depth: 1
       
       - name: Set up JDK
         uses: actions/setup-java@v2
@@ -57,12 +59,29 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential libffi-dev libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev
       
+      - name: Check Android directory contents
+        run: |
+          ls -la
+          if [ -d "Android" ]; then
+            echo "Android directory exists"
+            ls -la Android/
+          else
+            echo "Android directory not found!"
+            exit 1
+          fi
+      
       - name: Prepare Android environment
         run: |
           # Source the Android environment script
           cd Android
-          chmod +x android-env.sh
-          . ./android-env.sh
+          if [ -f "android-env.sh" ]; then
+            chmod +x android-env.sh
+            . ./android-env.sh
+            echo "Android environment script sourced"
+          else
+            echo "android-env.sh not found!"
+            exit 1
+          fi
           
           # Export variables needed by android.py
           echo "ANDROID_NDK_HOME=$NDK_HOME" >> $GITHUB_ENV
@@ -89,7 +108,7 @@ jobs:
           echo "Running Android Python builder with options: $BUILD_OPTS"
           
           # Run the Android Python builder with verbose output
-          python3 -v android.py $BUILD_OPTS
+          python3 android.py $BUILD_OPTS
           
           # Check build result
           if [ $? -ne 0 ]; then
@@ -107,10 +126,11 @@ jobs:
             cp -r build/* ../python-android-build/
           else
             echo "Build directory not found!"
+            ls -la
             exit 1
           fi
       
-      - name: Upload artifacts
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v2
         with:
           name: python-android-${{ github.event.inputs.arch }}-api${{ github.event.inputs.android_api }}
