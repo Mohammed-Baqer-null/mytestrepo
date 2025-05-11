@@ -114,17 +114,17 @@ jobs:
           fi
           
           # Build command with all required parameters
-          BUILD_OPTS="--host $HOST --arch $ARCH --api $API"
+          #BUILD_OPTS="--host $HOST"
           
-          if ${{ github.event.inputs.static_build }}; then
-            BUILD_OPTS="$BUILD_OPTS --static"
-          fi
+          #if ${{ github.event.inputs.static_build }}; then
+            #BUILD_OPTS="$BUILD_OPTS --static"
+          #fi
           
           echo "Running Android Python builder with options: $BUILD_OPTS"
           echo "Build command: python3 android.py $BUILD_OPTS"
           
           # Run with verbose output
-          python3 android.py $BUILD_OPTS
+          python3 android.py build $HOST
           
           if [ $? -ne 0 ]; then
             echo "Build failed!"
