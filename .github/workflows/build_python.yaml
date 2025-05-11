@@ -132,9 +132,9 @@ jobs:
           fi
           
           # Verify build output
-          if [ -d "build" ]; then
+          if [ -d "../cross-build/build" ]; then
             echo "Build artifacts:"
-            ls -la build/
+            ls -la ../cross-build/build/
           else
             echo "No build directory created!"
             exit 1
@@ -147,7 +147,7 @@ jobs:
           
           if [ -d "build" ]; then
             echo "Copying build artifacts..."
-            cp -rv build/* ../python-android-build/
+            cp -rv ../cross-build/build/* ../python-android-build/
             echo "Copied artifacts:"
             ls -la ../python-android-build/
           else
