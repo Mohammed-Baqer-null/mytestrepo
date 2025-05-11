@@ -75,33 +75,17 @@ jobs:
             git automake autoconf \
             libtool pkg-config
       
-      - name: Prepare Android environment
+      - name: Set HOST based on architecture
         run: |
-          # Determine host triplet based on architecture
           case "${{ github.event.inputs.arch }}" in
             "arm64-v8a") HOST="aarch64-linux-android" ;;
             "armeabi-v7a") HOST="armv7a-linux-androideabi" ;;
             "x86") HOST="i686-linux-android" ;;
             "x86_64") HOST="x86_64-linux-android" ;;
           esac
-          
-          # Set environment variables
           echo "HOST=$HOST" >> $GITHUB_ENV
-          echo "ARCH=${{ github.event.inputs.arch }}" >> $GITHUB_ENV
-          echo "API=${{ github.event.inputs.android_api }}" >> $GITHUB_ENV
-          
-          cd Android
-          if [ -f "android-env.sh" ]; then
-            chmod +x android-env.sh
-            # Source the script with all necessary variables
-            HOST="$HOST" . ./android-env.sh
-            echo "Android environment script sourced"
-            echo "HOST set to: $HOST"
-            echo "NDK path: $NDK_HOME"
-          else
-            echo "android-env.sh not found!"
-            exit 1
-          fi
+          echo "Selected architecture: ${{ github.event.inputs.arch }}"
+          echo "Set HOST to: $HOST"
       
       - name: Build Python for Android
         run: |
@@ -113,18 +97,9 @@ jobs:
             exit 1
           fi
           
-          # Build command with all required parameters
-          #BUILD_OPTS="--host $HOST"
-          
-          #if ${{ github.event.inputs.static_build }}; then
-            #BUILD_OPTS="$BUILD_OPTS --static"
-          #fi
-          
-          echo "Running Android Python builder with options: $BUILD_OPTS"
-          echo "Build command: python3 android.py $BUILD_OPTS"
-          
-          # Run with verbose output
-          python3 android.py build $HOST
+          # Build with explicit HOST parameter
+          echo "Building Python with host: $HOST"
+          python3 android.py build "$HOST"
           
           if [ $? -ne 0 ]; then
             echo "Build failed!"
@@ -145,16 +120,26 @@ jobs:
           mkdir -p python-android-build
           cd Android
           
-          if [ -d "../cross-build/build" ]; then
-            echo "Copying build artifacts..."
+          if [ -d "../cross-build/$HOST" ]; then
+            echo "Copying build artifacts from cross-build/$HOST..."
+            cp -rv "../cross-build/$HOST"/* ../python-android-build/
+            echo "Copied artifacts:"
+            ls -la ../python-android-build/
+          elif [ -d "../cross-build/build" ]; then
+            echo "Copying build artifacts from cross-build/build..."
             cp -rv ../cross-build/build/* ../python-android-build/
             echo "Copied artifacts:"
             ls -la ../python-android-build/
           else
-            echo "Build directory not found!"
-            ls -la
+            echo "Build directories not found!"
+            ls -la ../cross-build/
             exit 1
           fi
+      
+      - name: Verify architecture of built binaries
+        run: |
+          echo "Verifying architecture of built binaries..."
+          find python-android-build/ -name "*.so" -o -name "libpython*" | xargs file || true
       
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
