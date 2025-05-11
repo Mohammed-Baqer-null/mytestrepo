@@ -34,14 +34,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout CPython repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with:
           repository: python/cpython
           ref: ${{ github.event.inputs.python_version }}
           fetch-depth: 1
       
       - name: Set up JDK
-        uses: actions/setup-java@v2
+        uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '11'
@@ -131,7 +131,7 @@ jobs:
           fi
       
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: python-android-${{ github.event.inputs.arch }}-api${{ github.event.inputs.android_api }}
           path: python-android-build/
