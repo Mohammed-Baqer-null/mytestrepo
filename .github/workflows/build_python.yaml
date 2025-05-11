@@ -145,7 +145,7 @@ jobs:
           mkdir -p python-android-build
           cd Android
           
-          if [ -d "build" ]; then
+          if [ -d "../cross-build/build" ]; then
             echo "Copying build artifacts..."
             cp -rv ../cross-build/build/* ../python-android-build/
             echo "Copied artifacts:"
