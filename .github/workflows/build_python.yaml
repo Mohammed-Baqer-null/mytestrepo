@@ -70,51 +70,58 @@ jobs:
             exit 1
           fi
       
-      - name: Prepare Android environment
-        run: |
-          # Source the Android environment script
-          cd Android
-          if [ -f "android-env.sh" ]; then
-            chmod +x android-env.sh
-            . ./android-env.sh
-            echo "Android environment script sourced"
-          else
-            echo "android-env.sh not found!"
-            exit 1
-          fi
-          
-          # Export variables needed by android.py
-          echo "ANDROID_NDK_HOME=$NDK_HOME" >> $GITHUB_ENV
-          echo "ANDROID_NDK_ROOT=$NDK_HOME" >> $GITHUB_ENV
-          
-      - name: Build Python for Android
-        run: |
-          cd Android
-          
-          # Check if android.py exists
-          if [ ! -f "android.py" ]; then
-            echo "Error: android.py script not found!"
-            ls -la
-            exit 1
-          fi
-          
-          # Set build options based on inputs
-          BUILD_OPTS="--arch ${{ github.event.inputs.arch }} --api ${{ github.event.inputs.android_api }}"
-          
-          if ${{ github.event.inputs.static_build }}; then
-            BUILD_OPTS="$BUILD_OPTS --static"
-          fi
-          
-          echo "Running Android Python builder with options: $BUILD_OPTS"
-          
-          # Run the Android Python builder with verbose output
-          python3 android.py $BUILD_OPTS
-          
-          # Check build result
-          if [ $? -ne 0 ]; then
-            echo "Build failed!"
-            exit 1
-          fi
+- name: Prepare Android environment
+  run: |
+    # Set HOST based on architecture
+    case "${{ github.event.inputs.arch }}" in
+      "arm64-v8a") HOST="aarch64-linux-android" ;;
+      "armeabi-v7a") HOST="armv7a-linux-androideabi" ;;
+      "x86") HOST="i686-linux-android" ;;
+      "x86_64") HOST="x86_64-linux-android" ;;
+    esac
+    
+    # Source the Android environment script
+    cd Android
+    if [ -f "android-env.sh" ]; then
+      chmod +x android-env.sh
+      export HOST  # Make sure the script can access this variable
+      . ./android-env.sh
+      echo "Android environment script sourced"
+      echo "HOST set to: $HOST"
+    else
+      echo "android-env.sh not found!"
+      exit 1
+    fi
+    
+    # Export variables needed by android.py
+    echo "ANDROID_NDK_HOME=$NDK_HOME" >> $GITHUB_ENV
+    echo "ANDROID_NDK_ROOT=$NDK_HOME" >> $GITHUB_ENV
+    echo "HOST=$HOST" >> $GITHUB_ENV  # Make available for later steps
+    
+
+- name: Build Python for Android
+  run: |
+    cd Android
+    
+    if [ ! -f "android.py" ]; then
+      echo "Error: android.py script not found!"
+      ls -la
+      exit 1
+    fi
+    
+    BUILD_OPTS="--host $HOST --arch ${{ github.event.inputs.arch }} --api ${{ github.event.inputs.android_api }}"
+    
+    if ${{ github.event.inputs.static_build }}; then
+      BUILD_OPTS="$BUILD_OPTS --static"
+    fi
+    
+    echo "Running Android Python builder with options: $BUILD_OPTS"
+    python3 android.py $BUILD_OPTS
+    
+    if [ $? -ne 0 ]; then
+      echo "Build failed!"
+      exit 1
+    fi
       
       - name: Package artifacts
         run: |
