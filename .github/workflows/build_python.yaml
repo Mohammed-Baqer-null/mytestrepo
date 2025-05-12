@@ -87,6 +87,27 @@ jobs:
           echo "Selected architecture: ${{ github.event.inputs.arch }}"
           echo "Set HOST to: $HOST"
       
+      - name: Modify android.py to enable static build
+        if: ${{ github.event.inputs.static_build == 'true' }}
+        run: |
+          cd Android
+          echo "Backing up original android.py..."
+          cp android.py android.py.bak
+          
+          echo "Modifying android.py to enable static builds..."
+          # Replace "--without-static-libpython" with "--with-static-libpython"
+          sed -i 's/--without-static-libpython/--with-static-libpython/g' android.py
+          
+          echo "Checking if modification was successful:"
+          grep -n "static-libpython" android.py
+          
+          # Alternative approach if the above doesn't work
+          if ! grep -q "\-\-with-static-libpython" android.py; then
+            echo "First sed approach didn't work, trying alternative..."
+            sed -i 's/"--disable-ipv6",/"--disable-ipv6",\n        "--with-static-libpython",/g' android.py
+            grep -n "static-libpython" android.py
+          fi
+      
       - name: Build Python for Android
         run: |
           cd Android
@@ -144,5 +165,5 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: python-android-${{ github.event.inputs.arch }}-api${{ github.event.inputs.android_api }}
+          name: python-android-${{ github.event.inputs.arch }}-api${{ github.event.inputs.android_api }}${{ github.event.inputs.static_build == 'true' && '-static' || '' }}
           path: python-android-build/
