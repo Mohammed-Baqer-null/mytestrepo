@@ -189,10 +189,10 @@ jobs:
           python3 -m pip install -e .
           
           echo "Configuring Nuitka for Android cross-compilation..."
-          mkdir -p nuitka-android-build
+          mkdir -p ../nuitka-android-build
           
           # Create necessary toolchain configuration
-          cat > nuitka_android_config.py << EOF
+          cat > ../nuitka-android-build/nuitka_android_config.py << EOF
           import os
           import sys
           
@@ -221,18 +221,62 @@ jobs:
           print(f"Python lib: {PYTHON_LIB}")
           EOF
           
-          # Modify Nuitka setup for Android
           echo "Building Nuitka for Android..."
           PYTHON_ROOT=$(pwd)/../python-android-build
           
           # Package Nuitka for Android
-          mkdir -p ../nuitka-android-build
-          cp -r nuitka ../nuitka-android-build/
-          cp -r Nuitka ../nuitka-android-build/
-          cp setup.py ../nuitka-android-build/
-          cp nuitka_android_config.py ../nuitka-android-build/
-          cp -r bin ../nuitka-android-build/ || true
-          cp -r misc ../nuitka-android-build/ || true
+          # Get the correct directory structure
+          find . -type d -name "nuitka" | grep -v "__pycache__" || true
+          find . -type d -name "Nuitka" | grep -v "__pycache__" || true
+          
+          # Copy the entire Nuitka repository
+          cp -r . ../nuitka-android-build/
+          
+          # Create a wrapper script for using Nuitka with Android
+          cat > ../nuitka-android-build/nuitka-android.py << 'EOF'
+          #!/usr/bin/env python3
+          
+          import os
+          import sys
+          import subprocess
+          
+          # Add the Nuitka installation to the Python path
+          nuitka_dir = os.path.dirname(os.path.abspath(__file__))
+          sys.path.insert(0, nuitka_dir)
+          
+          # Import the Android configuration
+          from nuitka_android_config import *
+          
+          def main():
+              if len(sys.argv) < 2:
+                  print("Usage: nuitka-android.py your_script.py [Nuitka options]")
+                  return 1
+              
+              # Set environment variables for cross-compilation
+              os.environ["CC"] = CC
+              os.environ["CXX"] = CXX
+              
+              # Build the Nuitka command
+              cmd = [
+                  sys.executable,
+                  "-m", "nuitka",
+                  "--android",
+                  f"--android-ndk={ANDROID_NDK}",
+                  f"--android-api-level={API_LEVEL}",
+                  # Add more options as needed
+              ]
+              
+              # Add the user's script and any additional options
+              cmd.extend(sys.argv[1:])
+              
+              print(f"Executing: {' '.join(cmd)}")
+              return subprocess.call(cmd)
+          
+          if __name__ == "__main__":
+              sys.exit(main())
+          EOF
+          
+          chmod +x ../nuitka-android-build/nuitka-android.py
           
           # Create a simple README
           cat > ../nuitka-android-build/README.md << EOF
@@ -297,11 +341,7 @@ jobs:
             exit 1
           fi
           
-          python -m nuitka \
-            --android-ndk=$ANDROID_NDK_HOME \
-            --android-api=${{ github.event.inputs.android_api }} \
-            --android-arch=${{ github.event.inputs.arch }} \
-            "$@"
+          python "$NUITKA_PATH/nuitka-android.py" "$@"
           EOF
           
           chmod +x combined-android-build/compile_with_nuitka.sh
