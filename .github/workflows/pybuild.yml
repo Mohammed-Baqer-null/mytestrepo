@@ -1,0 +1,367 @@
+name: Build Python and Nuitka for Android
+
+on:
+  workflow_dispatch:
+    inputs:
+      python_version:
+        description: 'Python version to build'
+        required: true
+        default: 'main'
+        type: string
+      nuitka_version:
+        description: 'Nuitka version to build'
+        required: true
+        default: 'develop'
+        type: string
+      android_api:
+        description: 'Android API level'
+        required: true
+        default: '27'
+        type: string
+      arch:
+        description: 'Architecture to build for'
+        required: true
+        default: 'arm64-v8a'
+        type: choice
+        options:
+          - arm64-v8a
+          - armeabi-v7a
+          - x86
+          - x86_64
+      static_build:
+        description: 'Build static Python'
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout CPython repository
+        uses: actions/checkout@v4
+        with:
+          repository: python/cpython
+          ref: ${{ github.event.inputs.python_version }}
+          fetch-depth: 1
+      
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+      
+      - name: Install Android NDK
+        run: |
+          echo "y" | sdkmanager "ndk;25.2.9519653"
+          echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/25.2.9519653" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/25.2.9519653" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/25.2.9519653" >> $GITHUB_ENV
+      
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libffi-dev \
+            libssl-dev \
+            zlib1g-dev \
+            libbz2-dev \
+            libreadline-dev \
+            libsqlite3-dev \
+            wget curl llvm \
+            libncurses5-dev \
+            xz-utils tk-dev \
+            libxml2-dev \
+            libxmlsec1-dev \
+            git automake autoconf \
+            libtool pkg-config \
+            ccache cmake
+      
+      - name: Set HOST based on architecture
+        run: |
+          case "${{ github.event.inputs.arch }}" in
+            "arm64-v8a") HOST="aarch64-linux-android" ;;
+            "armeabi-v7a") HOST="armv7a-linux-androideabi" ;;
+            "x86") HOST="i686-linux-android" ;;
+            "x86_64") HOST="x86_64-linux-android" ;;
+          esac
+          echo "HOST=$HOST" >> $GITHUB_ENV
+          echo "Selected architecture: ${{ github.event.inputs.arch }}"
+          echo "Set HOST to: $HOST"
+      
+      - name: Modify android.py to enable static build
+        if: ${{ github.event.inputs.static_build == 'true' }}
+        run: |
+          cd Android
+          echo "Backing up original android.py..."
+          cp android.py android.py.bak
+          
+          echo "Modifying android.py to enable static builds..."
+          # Replace "--without-static-libpython" with "--with-static-libpython"
+          sed -i 's/--without-static-libpython/--with-static-libpython/g' android.py
+          
+          echo "Checking if modification was successful:"
+          grep -n "static-libpython" android.py
+          
+          # Alternative approach if the above doesn't work
+          if ! grep -q "\-\-with-static-libpython" android.py; then
+            echo "First sed approach didn't work, trying alternative..."
+            sed -i 's/"--disable-ipv6",/"--disable-ipv6",\n        "--with-static-libpython",/g' android.py
+            grep -n "static-libpython" android.py
+          fi
+      
+      - name: Build Python for Android
+        run: |
+          cd Android
+          
+          if [ ! -f "android.py" ]; then
+            echo "Error: android.py script not found!"
+            ls -la
+            exit 1
+          fi
+          
+          # Build with explicit HOST parameter
+          echo "Building Python with host: $HOST"
+          python3 android.py build "$HOST"
+          
+          if [ $? -ne 0 ]; then
+            echo "Build failed!"
+            exit 1
+          fi
+          
+          # Verify build output
+          if [ -d "../cross-build/build" ]; then
+            echo "Build artifacts:"
+            ls -la ../cross-build/build/
+          else
+            echo "No build directory created!"
+            exit 1
+          fi
+      
+      - name: Package Python artifacts
+        run: |
+          mkdir -p python-android-build
+          cd Android
+          
+          if [ -d "../cross-build/$HOST" ]; then
+            echo "Copying build artifacts from cross-build/$HOST..."
+            cp -rv "../cross-build/$HOST"/* ../python-android-build/
+            echo "Copied artifacts:"
+            ls -la ../python-android-build/
+          elif [ -d "../cross-build/build" ]; then
+            echo "Copying build artifacts from cross-build/build..."
+            cp -rv ../cross-build/build/* ../python-android-build/
+            echo "Copied artifacts:"
+            ls -la ../python-android-build/
+          else
+            echo "Build directories not found!"
+            ls -la ../cross-build/
+            exit 1
+          fi
+          
+          # Create a more organized structure for easier integration
+          mkdir -p ../python-android-build/bin
+          mkdir -p ../python-android-build/lib
+          mkdir -p ../python-android-build/include
+          
+          # Move relevant files to their respective directories
+          find ../python-android-build -name "*.so" -exec cp {} ../python-android-build/lib/ \; || true
+          find ../python-android-build -name "*.a" -exec cp {} ../python-android-build/lib/ \; || true
+          find ../python-android-build -name "*.h" -exec cp --parents {} ../python-android-build/include/ \; || true
+          find ../python-android-build -type f -executable -exec cp {} ../python-android-build/bin/ \; || true
+      
+      - name: Clone and build Nuitka
+        run: |
+          echo "Cloning Nuitka repository..."
+          git clone https://github.com/Nuitka/Nuitka.git
+          cd Nuitka
+          git checkout ${{ github.event.inputs.nuitka_version }}
+          
+          echo "Setting up Python environment for Nuitka..."
+          python3 -m pip install --upgrade pip
+          python3 -m pip install wheel setuptools
+          
+          echo "Installing Nuitka dependencies..."
+          python3 -m pip install -e .
+          
+          echo "Configuring Nuitka for Android cross-compilation..."
+          mkdir -p nuitka-android-build
+          
+          # Create necessary toolchain configuration
+          cat > nuitka_android_config.py << EOF
+          import os
+          import sys
+          
+          # Android NDK paths
+          ANDROID_NDK = os.environ.get("ANDROID_NDK_HOME")
+          HOST = os.environ.get("HOST")
+          API_LEVEL = "${{ github.event.inputs.android_api }}"
+          
+          # Toolchain paths
+          TOOLCHAIN = f"{ANDROID_NDK}/toolchains/llvm/prebuilt/linux-x86_64"
+          CC = f"{TOOLCHAIN}/bin/{HOST}{API_LEVEL}-clang"
+          CXX = f"{TOOLCHAIN}/bin/{HOST}{API_LEVEL}-clang++"
+          
+          # Python paths (built earlier)
+          PYTHON_ROOT = os.path.abspath("../python-android-build")
+          PYTHON_INCLUDE = os.path.join(PYTHON_ROOT, "include/python3.*")
+          PYTHON_LIB = os.path.join(PYTHON_ROOT, "lib")
+          
+          # Output this information
+          print(f"Android NDK: {ANDROID_NDK}")
+          print(f"Toolchain: {TOOLCHAIN}")
+          print(f"CC: {CC}")
+          print(f"CXX: {CXX}")
+          print(f"Python root: {PYTHON_ROOT}")
+          print(f"Python include: {PYTHON_INCLUDE}")
+          print(f"Python lib: {PYTHON_LIB}")
+          EOF
+          
+          # Modify Nuitka setup for Android
+          echo "Building Nuitka for Android..."
+          PYTHON_ROOT=$(pwd)/../python-android-build
+          
+          # Package Nuitka for Android
+          mkdir -p ../nuitka-android-build
+          cp -r nuitka ../nuitka-android-build/
+          cp -r Nuitka ../nuitka-android-build/
+          cp setup.py ../nuitka-android-build/
+          cp nuitka_android_config.py ../nuitka-android-build/
+          cp -r bin ../nuitka-android-build/ || true
+          cp -r misc ../nuitka-android-build/ || true
+          
+          # Create a simple README
+          cat > ../nuitka-android-build/README.md << EOF
+          # Nuitka for Android
+          
+          This is a build of Nuitka for Android, using Python ${GITHUB_EVENT_INPUTS_PYTHON_VERSION}.
+          
+          ## Configuration
+          
+          - Android API level: ${{ github.event.inputs.android_api }}
+          - Architecture: ${{ github.event.inputs.arch }}
+          - HOST: ${HOST}
+          - Static Python: ${{ github.event.inputs.static_build }}
+          
+          ## Usage
+          
+          To use Nuitka with the Android Python build, you need to set up the proper environment:
+          
+          ```bash
+          export ANDROID_NDK_HOME=/path/to/android/ndk
+          export PATH=/path/to/python-android-build/bin:\$PATH
+          export PYTHONPATH=/path/to/nuitka-android-build
+          ```
+          
+          Then you can compile Python scripts for Android:
+          
+          ```bash
+          python -m nuitka --android-ndk=\$ANDROID_NDK_HOME --android-api=${{ github.event.inputs.android_api }} --android-arch=${{ github.event.inputs.arch }} your_script.py
+          ```
+          EOF
+      
+      - name: Create combined package
+        run: |
+          mkdir -p combined-android-build
+          
+          # Copy Python build
+          cp -r python-android-build/* combined-android-build/
+          
+          # Copy Nuitka build
+          mkdir -p combined-android-build/nuitka
+          cp -r nuitka-android-build/* combined-android-build/nuitka/
+          
+          # Create scripts to use Python with Nuitka
+          cat > combined-android-build/compile_with_nuitka.sh << 'EOF'
+          #!/bin/bash
+          
+          if [ $# -lt 1 ]; then
+            echo "Usage: $0 <python_script.py> [additional Nuitka options]"
+            exit 1
+          fi
+          
+          SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          PYTHON_PATH="$SCRIPT_DIR"
+          NUITKA_PATH="$SCRIPT_DIR/nuitka"
+          
+          export PYTHONPATH="$NUITKA_PATH:$PYTHONPATH"
+          export PATH="$PYTHON_PATH/bin:$PATH"
+          
+          # Set Android NDK if not already set
+          if [ -z "$ANDROID_NDK_HOME" ]; then
+            echo "ANDROID_NDK_HOME is not set. Please set it to your Android NDK path."
+            exit 1
+          fi
+          
+          python -m nuitka \
+            --android-ndk=$ANDROID_NDK_HOME \
+            --android-api=${{ github.event.inputs.android_api }} \
+            --android-arch=${{ github.event.inputs.arch }} \
+            "$@"
+          EOF
+          
+          chmod +x combined-android-build/compile_with_nuitka.sh
+          
+          # Create a README for the combined package
+          cat > combined-android-build/README.md << EOF
+          # Python and Nuitka for Android
+          
+          This package contains both Python and Nuitka compiled for Android.
+          
+          ## Build Information
+          
+          - Python version: ${{ github.event.inputs.python_version }}
+          - Nuitka version: ${{ github.event.inputs.nuitka_version }}
+          - Android API level: ${{ github.event.inputs.android_api }}
+          - Architecture: ${{ github.event.inputs.arch }}
+          - Static Python: ${{ github.event.inputs.static_build }}
+          
+          ## Directory Structure
+          
+          - \`bin/\`: Python binary and executable files
+          - \`lib/\`: Python libraries and shared objects
+          - \`include/\`: Header files
+          - \`nuitka/\`: Nuitka compiler package
+          
+          ## Usage
+          
+          To compile a Python script for Android, use the provided script:
+          
+          ```bash
+          export ANDROID_NDK_HOME=/path/to/android/ndk
+          ./compile_with_nuitka.sh your_script.py
+          ```
+          
+          For additional Nuitka options:
+          
+          ```bash
+          ./compile_with_nuitka.sh your_script.py --standalone --enable-plugin=numpy
+          ```
+          EOF
+      
+      - name: Verify architecture of built binaries
+        run: |
+          echo "Verifying architecture of built binaries..."
+          find combined-android-build/ -name "*.so" -o -name "libpython*" | xargs file || true
+      
+      - name: Upload Python artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-android-${{ github.event.inputs.arch }}-api${{ github.event.inputs.android_api }}${{ github.event.inputs.static_build == 'true' && '-static' || '' }}
+          path: python-android-build/
+      
+      - name: Upload Nuitka artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuitka-android-${{ github.event.inputs.arch }}-api${{ github.event.inputs.android_api }}
+          path: nuitka-android-build/
+      
+      - name: Upload combined artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-nuitka-android-${{ github.event.inputs.arch }}-api${{ github.event.inputs.android_api }}${{ github.event.inputs.static_build == 'true' && '-static' || '' }}
+          path: combined-android-build/
